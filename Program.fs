@@ -12,7 +12,7 @@ open BenchmarkDotNet.Running
 
 let rng = Random 123
 let numberOfCities = 1_000
-let numberOfTrucks = 1_000
+let numberOfTrucks = 100_000
 let cities = [| for c in 1 .. numberOfCities -> c * 1<City> |]
 let trucks = [| for t in 1 .. numberOfTrucks -> t * 1<Truck> |]
 
@@ -167,21 +167,21 @@ let main argv =
 
     | "profiledense" ->
         let iterations = int argv.[1]
-        printfn "Starting work"
+        printfn "Starting loops"
         for _ = 1 to iterations do
             let _ = Dense.loop ()
             ()
 
     | "profilemedium" ->
         let iterations = int argv.[1]
-        printfn "Starting work"
+        printfn "Starting loops"
         for _ = 1 to iterations do
             let _ = MediumSparsity.loop ()
             ()
 
     | "profilesparse" ->
         let iterations = int argv.[1]
-        printfn "Starting work"
+        printfn "Starting loops"
         for _ = 1 to iterations do
             let _ = HighSparsity.loop ()
             ()
