@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.31605.320
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "SliceMapPerformanceExploration", "SliceMapPerformanceExploration.fsproj", "{23BF2E9F-7FBD-4F14-9315-AE6F1C16CAA8}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{23BF2E9F-7FBD-4F14-9315-AE6F1C16CAA8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{23BF2E9F-7FBD-4F14-9315-AE6F1C16CAA8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{23BF2E9F-7FBD-4F14-9315-AE6F1C16CAA8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{23BF2E9F-7FBD-4F14-9315-AE6F1C16CAA8}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {158BCA6F-B2A8-4061-9EA1-1B3E7C2DE886}
+	EndGlobalSection
+EndGlobal
