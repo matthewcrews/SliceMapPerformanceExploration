@@ -12,9 +12,9 @@ open BenchmarkDotNet.Running
 
 let rng = Random 123
 let numberOfCities = 1_000
-let numberOfTrucks = 100_000
-let cities = [| for c in 1 .. numberOfCities -> c * 1<City> |]
-let trucks = [| for t in 1 .. numberOfTrucks -> t * 1<Truck> |]
+let numberOfTrucks = 1_000
+let cities = [| for c in 1 .. numberOfCities -> LanguagePrimitives.Int32WithMeasure<City> c |]
+let trucks = [| for t in 1 .. numberOfTrucks -> LanguagePrimitives.Int32WithMeasure<Truck> t|]
 
 
 module Dense =
@@ -88,12 +88,15 @@ module MediumSparsity =
                 c, t, { Name = decisionName; Type = DecisionType.Boolean }
         |] |> SliceMap2D
 
+    let numberOfIterations = 4
+
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for c in cities do
-            let total = sum (capacity .* decisions.[c, All] .* costs)
-            result <- total
+        for _ = 1 to numberOfIterations do
+            for c in cities do
+                let total = sum (capacity .* decisions.[c, All] .* costs)
+                result <- total
 
         result
 
@@ -131,12 +134,15 @@ module HighSparsity =
                 c, t, { Name = decisionName; Type = DecisionType.Boolean }
         |] |> SliceMap2D
 
+    let numberOfIterations = 8
+
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for c in cities do
-            let total = sum (capacity .* decisions.[c, All] .* costs)
-            result <- total
+        for _ = 1 to numberOfIterations do
+            for c in cities do
+                let total = sum (capacity .* decisions.[c, All] .* costs)
+                result <- total
 
         result
 
