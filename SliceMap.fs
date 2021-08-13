@@ -3,7 +3,6 @@
 open System
 open System.Collections.Generic
 
-
 type Filter =
     | All
 
@@ -27,7 +26,7 @@ module internal Interval =
 
     let overlaps (i1: seq<Interval>) (i2: seq<Interval>) =
 
-        let rec loop (s1: IEnumerator<Interval>, s1HasValue: bool, s2: IEnumerator<Interval>, s2HasValue: bool) =
+        let rec loop (struct (s1: IEnumerator<Interval>, s1HasValue: bool, s2: IEnumerator<Interval>, s2HasValue: bool)) =
 
             if s1HasValue && s2HasValue then
 
@@ -42,9 +41,9 @@ module internal Interval =
                         }
 
                     if s1.Current.Max > s2.Current.Max then
-                        Some (nextInterval, (s1, s1HasValue, s2, s2.MoveNext ()))
+                        Some (nextInterval, struct (s1, s1HasValue, s2, s2.MoveNext ()))
                     else
-                        Some (nextInterval, (s1, s1.MoveNext (), s2, s2HasValue))
+                        Some (nextInterval, struct (s1, s1.MoveNext (), s2, s2HasValue))
 
             else
                 None
@@ -52,7 +51,7 @@ module internal Interval =
         let s1 = i1.GetEnumerator ()
         let s2 = i2.GetEnumerator ()
 
-        let state = (s1, s1.MoveNext (), s2, s2.MoveNext ())
+        let state = struct (s1, s1.MoveNext (), s2, s2.MoveNext ())
         Seq.unfold loop state
     
 
@@ -60,7 +59,7 @@ module internal Interval =
 // to map the higher dimensional seq `higher` to the lower dimensional seq `lower`.
 let inline internal hadamardProductDifferentDims (higher: seq<_>) (lower: seq<_>) joiner =
 
-    let rec loop (higher: IEnumerator<_>, higherHasValue, lower: IEnumerator<_>, lowerHasValue) =
+    let rec loop (struct (higher: IEnumerator<_>, higherHasValue, lower: IEnumerator<_>, lowerHasValue)) =
 
         if higherHasValue && lowerHasValue then
             let higherKey, higherValue = higher.Current
@@ -71,26 +70,26 @@ let inline internal hadamardProductDifferentDims (higher: seq<_>) (lower: seq<_>
             if higherJoinKey = lowerKey then
                 let nextValue = higherValue * lowerValue
                 let nextReturn = higherKey, nextValue
-                let nextState = (higher, higher.MoveNext (), lower, lower.MoveNext())
+                let nextState = struct (higher, higher.MoveNext (), lower, lower.MoveNext())
                 Some (nextReturn, nextState)
             elif higherJoinKey < lowerKey then
-                loop (higher, higher.MoveNext (), lower, lowerHasValue)
+                loop struct (higher, higher.MoveNext (), lower, lowerHasValue)
             else
-                loop (higher, higherHasValue, lower, lower.MoveNext ())
+                loop struct (higher, higherHasValue, lower, lower.MoveNext ())
 
         else
             None
 
     let higherEnumerator = higher.GetEnumerator ()
     let lowerEnumerator = lower.GetEnumerator ()
-    (higherEnumerator, higherEnumerator.MoveNext (), lowerEnumerator, lowerEnumerator.MoveNext ())
-    |> Seq.unfold loop
+    let initialState = struct (higherEnumerator, higherEnumerator.MoveNext (), lowerEnumerator, lowerEnumerator.MoveNext ())
+    Seq.unfold loop initialState
         
 
 // Performs the Hadamard Product on two sequences with matching dimensions.
 let inline hadamardProduct (a: seq<_>) (b: seq<_>) =
 
-    let rec loop (a: IEnumerator<_>, aHasValue, b: IEnumerator<_>, bHasValue) =
+    let rec loop (struct (a: IEnumerator<_>, aHasValue, b: IEnumerator<_>, bHasValue)) =
 
         if aHasValue && bHasValue then
             let aKey, aValue = a.Current
@@ -99,20 +98,20 @@ let inline hadamardProduct (a: seq<_>) (b: seq<_>) =
             if aKey = bKey then
                 let nextValue = aValue * bValue
                 let nextReturn = aKey, nextValue
-                let nextState = (a, a.MoveNext (), b, b.MoveNext())
+                let nextState = struct (a, a.MoveNext (), b, b.MoveNext())
                 Some (nextReturn, nextState)
             elif aKey < bKey then
-                loop (a, a.MoveNext (), b, bHasValue)
+                loop struct (a, a.MoveNext (), b, bHasValue)
             else
-                loop (a, aHasValue, b, b.MoveNext ())
+                loop struct (a, aHasValue, b, b.MoveNext ())
 
         else
             None
 
     let aEnumerator = a.GetEnumerator ()
     let bEnumerator = b.GetEnumerator ()
-    (aEnumerator, aEnumerator.MoveNext (), bEnumerator, bEnumerator.MoveNext ())
-    |> Seq.unfold loop
+    let initialState = struct (aEnumerator, aEnumerator.MoveNext (), bEnumerator, bEnumerator.MoveNext ())
+    Seq.unfold loop initialState
         
 
 
@@ -213,16 +212,16 @@ type SliceMap<'Key, 'Value when 'Key : comparison>
             outputSeq.GetEnumerator ()
         let indexInterval = indexIntervals.GetEnumerator ()
 
-        let rec loop (keyInterval: IEnumerator<KeyRecord<'Key>>, keyIntervalHasValue, indexInterval: IEnumerator<Interval>, indexIntervalHasValue) =
+        let rec loop (struct (keyInterval: IEnumerator<KeyRecord<'Key>>, keyIntervalHasValue, indexInterval: IEnumerator<Interval>, indexIntervalHasValue)) =
 
             if keyIntervalHasValue && indexIntervalHasValue then
                     
                 if keyInterval.Current.Interval.Max < indexInterval.Current.Min then
                     // The KeyInterval is behind the IndexInterval to move KeyInterval forward
-                    loop (keyInterval, keyInterval.MoveNext (), indexInterval, indexIntervalHasValue)
+                    loop struct (keyInterval, keyInterval.MoveNext (), indexInterval, indexIntervalHasValue)
                 elif indexInterval.Current.Max < keyInterval.Current.Interval.Min then
                     // The IndexInterval is behind the KeyInterval so move the IndexInterval forward
-                    loop (keyInterval, keyIntervalHasValue, indexInterval, indexInterval.MoveNext ())
+                    loop struct (keyInterval, keyIntervalHasValue, indexInterval, indexInterval.MoveNext ())
                 else
                     // The KeyInterval and the IndexInterval overlap. By definition, the Max Value of the MinIndices
                     // must be the index for the next value. Return it and move IndexInterval forward
@@ -233,17 +232,17 @@ type SliceMap<'Key, 'Value when 'Key : comparison>
                     // NOTE: Could possibly be wrong. Need to think about this
                     let nextState =
                         if keyInterval.Current.Interval.Max > indexInterval.Current.Max then
-                            keyInterval, keyIntervalHasValue, indexInterval, indexInterval.MoveNext ()
+                            struct (keyInterval, keyIntervalHasValue, indexInterval, indexInterval.MoveNext ())
                         else
-                            keyInterval, keyInterval.MoveNext (), indexInterval, indexIntervalHasValue
+                            struct (keyInterval, keyInterval.MoveNext (), indexInterval, indexIntervalHasValue)
 
                     Some (nextReturn, nextState)
 
             else
                 None
 
-        (keyInterval, keyInterval.MoveNext (), indexInterval, indexInterval.MoveNext ())
-        |> Seq.unfold loop
+        let initialState = struct (keyInterval, keyInterval.MoveNext (), indexInterval, indexInterval.MoveNext ())
+        Seq.unfold loop initialState
 
     member this.Values = this.KeyValuePairs |> Seq.map snd
 
