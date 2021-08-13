@@ -48,9 +48,10 @@ module Dense =
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for c in cities do
-            let total = sum (capacity .* decisions.[c, All] .* costs)
-            result <- total
+        for _ = 1 to 10 do
+            for c in cities do
+                let total = sum (capacity .* decisions.[c, All] .* costs)
+                result <- total
 
         result
 
@@ -91,9 +92,10 @@ module MediumSparsity =
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for c in cities do
-            let total = sum (capacity .* decisions.[c, All] .* costs)
-            result <- total
+        for _ = 1 to 10 do
+            for c in cities do
+                let total = sum (capacity .* decisions.[c, All] .* costs)
+                result <- total
 
         result
 
@@ -134,9 +136,10 @@ module HighSparsity =
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for c in cities do
-            let total = sum (capacity .* decisions.[c, All] .* costs)
-            result <- total
+        for _ = 1 to 10 do
+            for c in cities do
+                let total = sum (capacity .* decisions.[c, All] .* costs)
+                result <- total
 
         result
 
