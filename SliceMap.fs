@@ -188,6 +188,7 @@ type SliceMap2D<'k1, 'k2, 'v
     (internalState: SliceMap2DState<_, _, _>) =
 
     let mutable internalState = internalState
+    let mutable intervalIdx = 0
 
 
     new (keyValuePairs: seq<'k1 * 'k2 * 'v>) =
@@ -205,19 +206,33 @@ type SliceMap2D<'k1, 'k2, 'v
                 | SliceMap2DState.Key1Key2 i -> i
                 | SliceMap2DState.Key2Key1 i -> 
                     let reOrdered = SliceMap2DInternals.swapKeys i
+                    intervalIdx <- 0
                     internalState <- SliceMap2DState.Key1Key2 reOrdered
                     reOrdered
 
-            let mutable intervalIdx = 0
             let mutable keepSearching = true
+            let mutable keyFound = false
 
-            while keepSearching && intervalIdx < internals.OuterKeyValues.Length - 1 do
-                if internals.OuterComparer.Compare (internals.OuterKeyValues.[intervalIdx], x) = 0 then
+            while keepSearching do
+                let c = internals.OuterComparer.Compare (internals.OuterKeyValues.[intervalIdx], x)
+    
+                if c = 0 then
+                    //if intervalIdx < internals.OuterKeyValues.Length - 1 then
+                    //    intervalIdx <- intervalIdx + 1
                     keepSearching <- false
+                    keyFound <- true
+                if c < 0 then
+                    if intervalIdx < internals.OuterKeyValues.Length - 1 then
+                        intervalIdx <- intervalIdx + 1
+                    else
+                        keepSearching <- false
                 else
-                    intervalIdx <- intervalIdx + 1
+                    if intervalIdx > 0 then
+                        intervalIdx <- intervalIdx - 1
+                    else
+                        keepSearching <- false
 
-            if not keepSearching then
+            if keyFound then
                 let interval = internals.OuterKeyRanges.[intervalIdx]
                 SliceMap (internals.InnerComparer, internals.InnerKeyValues.Slice (interval.Start, interval.Length), internals.Values.Slice (interval.Start, interval.Length))
             else
@@ -232,12 +247,31 @@ type SliceMap2D<'k1, 'k2, 'v
                 | SliceMap2DState.Key2Key1 i -> i
                 | SliceMap2DState.Key1Key2 i -> 
                     let reOrdered = SliceMap2DInternals.swapKeys i
+                    intervalIdx <- 0
                     internalState <- SliceMap2DState.Key2Key1 reOrdered
                     reOrdered
 
-            let intervalIdx = Array.BinarySearch (internals.OuterKeyValues, x)
+            let mutable keepSearching = true
+            let mutable keyFound = false
 
-            if intervalIdx >= 0 then
+            while keepSearching do
+                let c = internals.OuterComparer.Compare (internals.OuterKeyValues.[intervalIdx], x)
+                
+                if c = 0 then
+                    keepSearching <- false
+                    keyFound <- true
+                if c < 0 then
+                    if intervalIdx < internals.OuterKeyValues.Length - 1 then
+                        intervalIdx <- intervalIdx + 1
+                    else
+                        keepSearching <- false
+                else
+                    if intervalIdx > 0 then
+                        intervalIdx <- intervalIdx - 1
+                    else
+                        keepSearching <- false
+
+            if keyFound then
                 let interval = internals.OuterKeyRanges.[intervalIdx]
                 SliceMap (internals.InnerComparer, internals.InnerKeyValues.Slice (interval.Start, interval.Length), internals.Values.Slice (interval.Start, interval.Length))
             else
