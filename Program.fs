@@ -6,14 +6,15 @@ open SliceMapPerformance.SliceMap
 open BenchmarkDotNet.Attributes
 open BenchmarkDotNet.Running
 
-type City = City of int
-type Truck = Truck of int
+
+[<Measure>] type City
+[<Measure>] type Truck
 
 let rng = Random 123
 let numberOfCities = 1_000
 let numberOfTrucks = 1_000
-let cities = [| for c in 1 .. numberOfCities -> City c |]
-let trucks = [| for t in 1 .. numberOfTrucks -> Truck t |]
+let cities = [| for c in 1 .. numberOfCities -> c * 1<City> |]
+let trucks = [| for t in 1 .. numberOfTrucks -> t * 1<Truck> |]
 
 
 module Dense =
@@ -166,18 +167,21 @@ let main argv =
 
     | "profiledense" ->
         let iterations = int argv.[1]
+        printfn "Starting work"
         for _ = 1 to iterations do
             let _ = Dense.loop ()
             ()
 
     | "profilemedium" ->
         let iterations = int argv.[1]
+        printfn "Starting work"
         for _ = 1 to iterations do
             let _ = MediumSparsity.loop ()
             ()
 
     | "profilesparse" ->
         let iterations = int argv.[1]
+        printfn "Starting work"
         for _ = 1 to iterations do
             let _ = HighSparsity.loop ()
             ()
