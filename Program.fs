@@ -88,15 +88,12 @@ module MediumSparsity =
                 c, t, { Name = decisionName; Type = DecisionType.Boolean }
         |] |> SliceMap2D
 
-    let numberOfIterations = 4
-
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for _ = 1 to numberOfIterations do
-            for c in cities do
-                let total = sum (capacity .* decisions.[c, All] .* costs)
-                result <- total
+        for c in cities do
+            let total = sum (capacity .* decisions.[c, All] .* costs)
+            result <- total
 
         result
 
@@ -134,15 +131,12 @@ module HighSparsity =
                 c, t, { Name = decisionName; Type = DecisionType.Boolean }
         |] |> SliceMap2D
 
-    let numberOfIterations = 8
-
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for _ = 1 to numberOfIterations do
-            for c in cities do
-                let total = sum (capacity .* decisions.[c, All] .* costs)
-                result <- total
+        for c in cities do
+            let total = sum (capacity .* decisions.[c, All] .* costs)
+            result <- total
 
         result
 
