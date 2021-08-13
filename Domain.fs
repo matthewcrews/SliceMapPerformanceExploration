@@ -21,6 +21,9 @@ type Decision = {
     static member ( * ) (l: float, r: Decision) =
         LinearExpr.Scale (l, LinearExpr.Decision r)
 
+    static member ( * ) (l: Decision, r: float) =
+        LinearExpr.Scale (r, LinearExpr.Decision l)
+
 
 [<RequireQualifiedAccess>]
 type LinearExpr =
