@@ -72,7 +72,10 @@ type SliceMap<'k, 'v when 'k : comparison> (comparer: IComparer<'k>, keys: ReadO
     member _.Comparer : IComparer<'k> = comparer
 
     static member inline ( .* ) (l: SliceMap<_,_>, r: SliceMap<_,_>) =
-        hadamardProduct (l, r)
+        if l.Keys.Length > r.Keys.Length then
+            hadamardProduct (l, r)
+        else
+            hadamardProduct (r, l)
 
 
 
@@ -232,16 +235,9 @@ type SliceMap2D<'k1, 'k2, 'v
                     internalState <- SliceMap2DState.Key2Key1 reOrdered
                     reOrdered
 
-            let mutable intervalIdx = 0
-            let mutable keepSearching = true
+            let intervalIdx = Array.BinarySearch (internals.OuterKeyValues, x)
 
-            while keepSearching && intervalIdx < internals.OuterKeyValues.Length - 1 do
-                if internals.OuterComparer.Compare (internals.OuterKeyValues.[intervalIdx], x) = 0 then
-                    keepSearching <- false
-                else
-                    intervalIdx <- intervalIdx + 1
-
-            if not keepSearching then
+            if intervalIdx >= 0 then
                 let interval = internals.OuterKeyRanges.[intervalIdx]
                 SliceMap (internals.InnerComparer, internals.InnerKeyValues.Slice (interval.Start, interval.Length), internals.Values.Slice (interval.Start, interval.Length))
             else
