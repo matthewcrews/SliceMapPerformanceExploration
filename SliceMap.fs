@@ -1,263 +1,338 @@
-﻿module SliceMapPerformance.SliceMap
-
+﻿module rec SliceMapPerformance.SliceMap
 
 open System
 open System.Collections.Generic
 
-[<NoComparison;NoEquality>]
-type SliceType<'a when 'a : comparison> =
-  | All
 
-[<NoComparison>]
-type SliceSet<[<EqualityConditionalOn>]'T when 'T : comparison>(comparer:IComparer<'T>, values:Memory<'T>) =
-    let comparer = comparer
-    let values = values
+type Filter =
+    | All
 
-    new(values:seq<'T>) =
-        let comparer = LanguagePrimitives.FastGenericComparer<'T>
-        let v = values |> Seq.distinct |> Seq.toArray |> Array.sort
-        SliceSet(comparer, v.AsMemory<'T>())
+type Interval = {
+    Min : int
+    Max : int
+}
 
-    member internal _.Comparer = comparer
-    member internal _.Values = values
+type internal KeyRecord<'Key> = {
+    Key : 'Key
+    Interval : Interval
+    NextRecordIdx : int
+}
 
-    member _.Union (b: SliceSet<'T>) =
-        let newValues = Array.zeroCreate(values.Length + b.Values.Length)
+type internal KeyInterval<'Key> = {
+    Key : 'Key
+    Interval : Interval
+}
 
-        let mutable aIdx = 0
-        let mutable bIdx = 0
-        let mutable outIdx = 0
+module internal Interval =
 
-        while (aIdx < values.Length && bIdx < b.Values.Length) do
-    
-            let c = comparer.Compare(values.Span.[aIdx], b.Values.Span.[bIdx])
+    let overlaps (i1: seq<Interval>) (i2: seq<Interval>) =
 
-            if c < 0 then
-                newValues.[outIdx] <- values.Span.[aIdx]
-                aIdx <- aIdx + 1
-                outIdx <- outIdx + 1
-            elif c = 0 then
-                newValues.[outIdx] <- values.Span.[aIdx]
-                aIdx <- aIdx + 1
-                bIdx <- bIdx + 1
-                outIdx <- outIdx + 1
+        let rec loop (s1: IEnumerator<Interval>, s1HasValue: bool, s2: IEnumerator<Interval>, s2HasValue: bool) =
+
+            if s1HasValue && s2HasValue then
+
+                if s1.Current.Max < s2.Current.Min then
+                    loop (s1, s1.MoveNext (), s2, s2HasValue)
+                elif s2.Current.Max < s1.Current.Min then
+                    loop (s1, s1HasValue, s2, s2.MoveNext ())
+                else
+                    let nextInterval = {
+                            Min = System.Math.Max (s1.Current.Min, s2.Current.Min)
+                            Max = System.Math.Min (s1.Current.Max, s2.Current.Max)
+                        }
+
+                    if s1.Current.Max > s2.Current.Max then
+                        Some (nextInterval, (s1, s1HasValue, s2, s2.MoveNext ()))
+                    else
+                        Some (nextInterval, (s1, s1.MoveNext (), s2, s2HasValue))
+
             else
-                newValues.[outIdx] <- b.Values.Span.[bIdx]
-                bIdx <- bIdx + 1
-                outIdx <- outIdx + 1
+                None
 
-        while aIdx < values.Length do
-            newValues.[outIdx] <- values.Span.[aIdx]
-            aIdx <- aIdx + 1
-            outIdx <- outIdx + 1
+        let s1 = i1.GetEnumerator ()
+        let s2 = i2.GetEnumerator ()
 
-        while bIdx < b.Values.Length do
-            newValues.[outIdx] <- b.Values.Span.[bIdx]
-            bIdx <- bIdx + 1
-            outIdx <- outIdx + 1
+        let state = (s1, s1.MoveNext (), s2, s2.MoveNext ())
+        Seq.unfold loop state
+    
 
-        SliceSet(comparer, newValues.AsMemory(0, outIdx))
+// This performs a Hadamard Product of two sequences. The `joiner` function is used
+// to map the higher dimensional seq `higher` to the lower dimensional seq `lower`.
+let inline internal hadamardProductDifferentDims (higher: seq<_>) (lower: seq<_>) joiner =
 
-    interface IEnumerable<'T> with
-        member _.GetEnumerator(): IEnumerator<'T> = 
-            let s = seq { for idx in 0..values.Length-1 -> values.Span.[idx] }
-            s.GetEnumerator()
+    let rec loop (higher: IEnumerator<_>, higherHasValue, lower: IEnumerator<_>, lowerHasValue) =
 
-    interface System.Collections.IEnumerable with
-        member _.GetEnumerator(): Collections.IEnumerator = 
-            let s = seq { for idx in 0..values.Length-1 -> values.Span.[idx] }
-            s.GetEnumerator() :> Collections.IEnumerator
+        if higherHasValue && lowerHasValue then
+            let higherKey, higherValue = higher.Current
+            let lowerKey, lowerValue = lower.Current
 
+            let higherJoinKey = joiner higherKey
 
-    member _.Count =
-        values.Length
+            if higherJoinKey = lowerKey then
+                let nextValue = higherValue * lowerValue
+                let nextReturn = higherKey, nextValue
+                let nextState = (higher, higher.MoveNext (), lower, lower.MoveNext())
+                Some (nextReturn, nextState)
+            elif higherJoinKey < lowerKey then
+                loop (higher, higher.MoveNext (), lower, lowerHasValue)
+            else
+                loop (higher, higherHasValue, lower, lower.MoveNext ())
 
+        else
+            None
 
-[<RequireQualifiedAccess>]
-module SliceSet =
-
-    let toSeq (a:SliceSet<_>) =
-        seq { for i in 0..a.Count - 1 -> a.Values.Span.[i] }
-
-    let slice (f:SliceType<_>) (keys:SliceSet<_>) =
-            match f with
-            | All -> keys
-
-
-type TryFind<'Key, 'Value> = 'Key -> 'Value option
-
-
-module TryFind =
-
-    let ofDictionary (d:Dictionary<'Key,'Value>) : TryFind<'Key, 'Value> =
-        fun k -> 
-          match d.TryGetValue(k) with
-          | true, value -> Some value
-          | false, _ -> None
-
-    let ofSeq (s:seq<'Key * 'Value>) : TryFind<'Key, 'Value> =
-        let d = Dictionary ()
+    let higherEnumerator = higher.GetEnumerator ()
+    let lowerEnumerator = lower.GetEnumerator ()
+    (higherEnumerator, higherEnumerator.MoveNext (), lowerEnumerator, lowerEnumerator.MoveNext ())
+    |> Seq.unfold loop
         
-        for (k, v) in s do
-                d.[k] <- v
 
-        ofDictionary d
+// Performs the Hadamard Product on two sequences with matching dimensions.
+let inline hadamardProduct (a: seq<_>) (b: seq<_>) =
 
-    //let toSeq (keys:seq<_>) (s:TryFind<_,_>) =
-    //    let lookup k = s k |> Option.map (fun v -> k, v)
+    let rec loop (a: IEnumerator<_>, aHasValue, b: IEnumerator<_>, bHasValue) =
+
+        if aHasValue && bHasValue then
+            let aKey, aValue = a.Current
+            let bKey, bValue = b.Current
+
+            if aKey = bKey then
+                let nextValue = aValue * bValue
+                let nextReturn = aKey, nextValue
+                let nextState = (a, a.MoveNext (), b, b.MoveNext())
+                Some (nextReturn, nextState)
+            elif aKey < bKey then
+                loop (a, a.MoveNext (), b, bHasValue)
+            else
+                loop (a, aHasValue, b, b.MoveNext ())
+
+        else
+            None
+
+    let aEnumerator = a.GetEnumerator ()
+    let bEnumerator = b.GetEnumerator ()
+    (aEnumerator, aEnumerator.MoveNext (), bEnumerator, bEnumerator.MoveNext ())
+    |> Seq.unfold loop
         
-    //    keys
-    //    |> Seq.choose lookup
-
-    //let toMap keys (s:TryFind<_,_>) =
-    //    s |> (toSeq keys) |> Map.ofSeq
-
-    //let equals keys (a:TryFind<_,_>) (b:TryFind<_,_>) =
-    //    let mutable result = true
-
-    //    for k in keys do
-    //        let aValue = a k
-    //        let bValue = b k
-    //        if aValue <> bValue then
-    //            result <- false
-
-    //    result
 
 
-    let inline sum keys (tryFind:TryFind<_,_>) =
-        let mutable acc = LanguagePrimitives.GenericZero
-
-        for k in keys do
-            match tryFind k with
-            | Some v -> 
-                acc <- acc + v
-            | None -> ()
-
-        acc
+let internal generateKeyIntervals1D (keys: _[]) =
+    keys
+    |> Array.mapi (fun idx key -> { Key = key; Interval = { Min = idx; Max = idx }})
 
 
-type ISliceData<'Key, 'Value when 'Key : comparison and 'Value : equality> =
-    abstract member Keys : 'Key seq
-    abstract member TryFind : TryFind<'Key, 'Value>
+let internal generateKeyIntervals2D (keys: _[]) =
+
+    if keys.Length = 0 then
+        [||], [||]
+    else
+
+        let mutable keys1 = []
+        let mutable keys2 = []
+        let mutable currKey1, _ = keys.[keys.Length - 1]
+        let mutable key1IntervalEndIdx = keys.Length - 1
+
+        for idx = keys.Length - 1 downto 0 do
+            let nextKey1, nextKey2 = keys.[idx]
+
+            keys2 <- { Key = nextKey2; Interval = { Min = idx; Max = idx }} :: keys2
+
+            if nextKey1 <> currKey1 then
+                keys1 <- { Key = currKey1; Interval = { Min = idx + 1; Max = key1IntervalEndIdx }} :: keys1
+                currKey1 <- nextKey1
+                key1IntervalEndIdx <- idx
+
+            if idx = 0 then
+                keys1 <- { Key = currKey1; Interval = { Min = idx; Max = key1IntervalEndIdx }} :: keys1
+
+        List.toArray keys1, List.toArray keys2
 
 
-[<NoComparison>]
-type SliceMap<'Key, 'Value when 'Key : comparison and 'Value : equality> 
-    (keys:SliceSet<'Key>, tryFind:TryFind<'Key, 'Value>) =
+let internal buildKeyRecords (intervals: KeyInterval<_>[]) =
 
-    let keys = keys
-    let tryFind = tryFind
+    if intervals.Length = 0 then
+        Array.empty
+    else
+        let result = Array.zeroCreate intervals.Length
+        let lastRecordIndexForInterval = Dictionary ()
 
-    new (s:seq<'Key * 'Value>) =
-        let keys = s |> Seq.map fst |> SliceSet
-        let store = TryFind.ofSeq s
-        SliceMap (keys, store)
+        for idx = intervals.Length - 1 downto 0 do
+            let keyInterval = intervals.[idx]
+            let lastIdx =
+                match lastRecordIndexForInterval.TryGetValue keyInterval.Key with
+                | true, lastIdx -> lastIdx
+                | false, _ -> intervals.Length // This will be beyond the bounds of the array
+            lastRecordIndexForInterval.[keyInterval.Key] <- idx
+            result.[idx] <- { Key = keyInterval.Key; Interval = keyInterval.Interval; NextRecordIdx = lastIdx }
 
-    interface ISliceData<'Key, 'Value> with
-        member _.Keys = SliceSet.toSeq keys
-        member _.TryFind = tryFind
-
-    member _.Keys = keys
-    member _.TryFind = tryFind
-
-    //override this.Equals(obj) =
-    //    match obj with
-    //    | :? SMap<'Key, 'Value> as other -> 
-    //        let mutable result = true
-    //        if not (Seq.equals this.Keys other.Keys) then
-    //            result <- false
-
-    //        if result then
-    //            if not (TryFind.equals this.Keys this.TryFind other.TryFind) then
-    //                result <- false
-
-    //        result
-    //    | _ -> false
-
-    //override this.GetHashCode () =
-    //    hash (this.AsMap())
-
-    //member _.ContainsKey k =
-    //    if keyInRange k then
-    //        match tryFind k with
-    //        | Some _ -> true
-    //        | None -> false
-    //    else
-    //        false
+        result
 
 
-    static member inline (.*) (a:SliceMap<_,_>, b:SliceMap<_,_>) =
-        let newKeys = a.Keys.Union b.Keys
-        let newTryFind k =
-            match (a.TryFind k), (b.TryFind k) with
-            | Some lv, Some rv -> Some (lv * rv)
-            | _,_ -> None
-        SliceMap(newKeys, newTryFind)
+type SliceMapExpr<'Key, 'Value when 'Key : comparison> (keyValuePairs: seq<'Key * 'Value>) =
+
+    let keyValuePairs = keyValuePairs
+
+    member _.KeyValuePairs = keyValuePairs
+    member _.Values = keyValuePairs |> Seq.map snd
+
+    static member inline ( .* ) (expr: SliceMapExpr<_,_>, sm: SliceMap<_,_>) =
+        hadamardProduct expr.KeyValuePairs sm.KeyValuePairs
+        |> SliceMapExpr
 
 
+type SliceMap<'Key, 'Value when 'Key : comparison> 
+    internal (keyIndexRecords: KeyRecord<'Key>[], values: 'Value[], indexIntervals: seq<Interval>) =
 
-    //static member inline Sum (m:SMap<_, _>) =
-    //    TryFind.sum m.Keys m.TryFind
+    let keyIndexRecords = keyIndexRecords
+    let values = values
+    let indexIntervals = indexIntervals
 
-    //interface IEnumerable<KeyValuePair<'Key, 'Value>> with
-    //    member _.GetEnumerator () : IEnumerator<KeyValuePair<'Key, 'Value>> = 
-    //        let s = seq { for key in keys -> tryFind key |> Option.map (fun v -> KeyValuePair(key, v)) } |> Seq.choose id
-    //        s.GetEnumerator ()
+    new (data: seq<'Key * 'Value>) =
+        let sortedData =
+            let x = 
+                data
+                |> Seq.toArray
+                |> Array.distinctBy fst
+            Array.sortInPlaceBy fst x
+            x
 
-    //interface System.Collections.IEnumerable with
-    //    member _.GetEnumerator () : Collections.IEnumerator = 
-    //        let s = seq { for key in keys -> tryFind key |> Option.map (fun v -> KeyValuePair(key, v)) } |> Seq.choose id
-    //        s.GetEnumerator () :> Collections.IEnumerator
-
-
-
-type SliceMap2<'Key1, 'Key2, 'Value when 'Key1 : comparison and 'Key2 : comparison and 'Value : equality> 
-    (keys1:SliceSet<'Key1>, keys2:SliceSet<'Key2>, tryFind:TryFind<('Key1 * 'Key2), 'Value>) =
-
-    let keys1 = keys1
-    let keys2 = keys2
-    let keys = seq {for k1 in keys1 do for k2 in keys2 -> (k1, k2)}
-    let tryFind = tryFind
-
-    new (s:seq<'Key1 * 'Key2 * 'Value>) =
-        let keys1 = s |> Seq.map (fun (k, _,_) -> k) |> SliceSet
-        let keys2 = s |> Seq.map (fun (_, k,_) -> k) |> SliceSet
-        let store = 
-            s
-            |> Seq.map (fun (k1, k2, v) -> (k1, k2), v)
-            |> TryFind.ofSeq
-        SliceMap2 (keys1, keys2, store)
+        let keyIndexRecords = 
+            sortedData
+            |> Array.map fst
+            |> generateKeyIntervals1D
+            |> buildKeyRecords
+            
+        let values = sortedData |> Array.map snd
+        let indexIntervals = Seq.singleton { Min = 0; Max = values.Length - 1 }
+        SliceMap (keyIndexRecords, values, indexIntervals)
 
 
-    interface ISliceData<('Key1 * 'Key2), 'Value> with
-      member _.Keys = keys
-      member _.TryFind = tryFind
+    member _.KeyValuePairs : seq<'Key * 'Value> =
+        let keyInterval =
+            let outputSeq = Array.toSeq keyIndexRecords
+            outputSeq.GetEnumerator ()
+        let indexInterval = indexIntervals.GetEnumerator ()
 
-    member _.Keys1 = keys1
-    member _.Keys2 = keys2
-    member _.Keys = keys
-    member _.TryFind = tryFind
+        let rec loop (keyInterval: IEnumerator<KeyRecord<'Key>>, keyIntervalHasValue, indexInterval: IEnumerator<Interval>, indexIntervalHasValue) =
 
-    // Slices
-    // 1D
+            if keyIntervalHasValue && indexIntervalHasValue then
+                    
+                if keyInterval.Current.Interval.Max < indexInterval.Current.Min then
+                    // The KeyInterval is behind the IndexInterval to move KeyInterval forward
+                    loop (keyInterval, keyInterval.MoveNext (), indexInterval, indexIntervalHasValue)
+                elif indexInterval.Current.Max < keyInterval.Current.Interval.Min then
+                    // The IndexInterval is behind the KeyInterval so move the IndexInterval forward
+                    loop (keyInterval, keyIntervalHasValue, indexInterval, indexInterval.MoveNext ())
+                else
+                    // The KeyInterval and the IndexInterval overlap. By definition, the Max Value of the MinIndices
+                    // must be the index for the next value. Return it and move IndexInterval forward
+                    let nextIdx = Math.Max (keyInterval.Current.Interval.Min, indexInterval.Current.Min)
+                    let nextValue = values.[nextIdx]
+                    let nextReturn = (keyInterval.Current.Key, nextValue)
+
+                    // NOTE: Could possibly be wrong. Need to think about this
+                    let nextState =
+                        if keyInterval.Current.Interval.Max > indexInterval.Current.Max then
+                            keyInterval, keyIntervalHasValue, indexInterval, indexInterval.MoveNext ()
+                        else
+                            keyInterval, keyInterval.MoveNext (), indexInterval, indexIntervalHasValue
+
+                    Some (nextReturn, nextState)
+
+            else
+                None
+
+        (keyInterval, keyInterval.MoveNext (), indexInterval, indexInterval.MoveNext ())
+        |> Seq.unfold loop
+
+    member this.Values = this.KeyValuePairs |> Seq.map snd
+
+
+    static member inline ( .* ) (a: SliceMap<_,_>, b: SliceMap<_,_>) =
+        hadamardProduct a.KeyValuePairs b.KeyValuePairs
+        |> SliceMapExpr
+
+
+type SliceMap2D<'Key1, 'Key2, 'Value when 'Key1 : comparison and 'Key2 : comparison>
+    internal (key1Intervals: KeyRecord<'Key1>[], key2Intervals: KeyRecord<'Key2>[], values: 'Value[], indexIntervals: seq<Interval>) =
+
+    let key1Intervals = key1Intervals
+    let key2Intervals = key2Intervals
+    let values = values
+    let indexIntervals = indexIntervals
+
+    let getIntervalsForKey (intervals: KeyRecord<_>[]) key =
+            
+        if intervals.Length > 0 then
+                
+            let rec loop idx =
+                if idx > intervals.Length - 1 then
+                    None
+                else
+                    let record = intervals.[idx]
+                    if record.Key = key then
+                        // We now just start skipping to the intervals we care about
+                        let nextIdx = record.NextRecordIdx
+                        Some (record.Interval, nextIdx)
+                    else
+                        loop (idx + 1)
+
+            0
+            |> Seq.unfold loop
+
+        else
+            Seq.empty
+
+
+    new (data: seq<'Key1 * 'Key2 * 'Value>) =
+        let keySelector (k1, k2, _) = k1, k2
+        let sortedData =
+            let x = 
+                data
+                |> Seq.toArray
+                |> Array.distinctBy keySelector
+            Array.sortInPlaceBy keySelector x
+            x
+
+        let key1Intervals, key2Intervals = 
+            sortedData
+            |> Array.map keySelector
+            |> generateKeyIntervals2D
+
+        let key1Records = buildKeyRecords key1Intervals
+        let key2Records = buildKeyRecords key2Intervals
+            
+        let values = sortedData |> Array.map (fun (_,_,v) -> v)
+        let indexIntervals = Seq.singleton { Min = 0; Max = values.Length - 1 }
+        SliceMap2D (key1Records, key2Records, values, indexIntervals)
+
+
     member this.Item
-        with get (k1, k2f) =
-            let keys2 = SliceSet.slice k2f this.Keys2
-            let newTryFind k = tryFind (k1, k)
-            SliceMap (keys2, newTryFind)
+        // NOTE: Ignoring the Filter at this time
+        with get (f: Filter, sliceKey: 'Key2) =
+            let key2Intervals = getIntervalsForKey key2Intervals sliceKey
+            let overlaps = Interval.overlaps key2Intervals indexIntervals
+            SliceMap (key1Intervals, values, overlaps)
 
     member this.Item
-        with get (k1f, k2) =
-            let keys1 = SliceSet.slice k1f this.Keys1
-            let newTryFind k = tryFind (k, k2)
-            SliceMap (keys1, newTryFind)
-
-    static member inline Sum (m:SliceMap2<_,_,_>) =
-        TryFind.sum m.Keys m.TryFind
+        // NOTE: Ignoring the Filter at this time
+        with get (sliceKey: 'Key1, f: Filter) =
+            let key1Intervals = getIntervalsForKey key1Intervals sliceKey
+            let overlaps = Interval.overlaps key1Intervals indexIntervals
+            SliceMap (key2Intervals, values, overlaps)
 
 
-/// <summary>A function which sums the values contained in a SliceMap</summary>
-/// <param name="x">An instance of ISliceData</param>
-/// <returns>A LinearExpression</returns>
-let inline sum (x:ISliceData<'Key, 'Value>) =
-    TryFind.sum x.Keys x.TryFind
+let inline inputs (v) = 
+    ((^InputValues) : (member Values: seq< ^Value>) v)
+
+let inline zero () = FSharp.Core.LanguagePrimitives.GenericZero<_>
+
+let inline sum x =
+
+    let mutable acc = zero ()
+    let values = inputs x
+
+    for v in values do
+        acc <- acc + v
+
+    acc
