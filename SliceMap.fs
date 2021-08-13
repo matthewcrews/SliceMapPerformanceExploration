@@ -103,27 +103,6 @@ module TryFind =
 
         ofDictionary d
 
-    //let toSeq (keys:seq<_>) (s:TryFind<_,_>) =
-    //    let lookup k = s k |> Option.map (fun v -> k, v)
-        
-    //    keys
-    //    |> Seq.choose lookup
-
-    //let toMap keys (s:TryFind<_,_>) =
-    //    s |> (toSeq keys) |> Map.ofSeq
-
-    //let equals keys (a:TryFind<_,_>) (b:TryFind<_,_>) =
-    //    let mutable result = true
-
-    //    for k in keys do
-    //        let aValue = a k
-    //        let bValue = b k
-    //        if aValue <> bValue then
-    //            result <- false
-
-    //    result
-
-
     let inline sum keys (tryFind:TryFind<_,_>) =
         let mutable acc = LanguagePrimitives.GenericZero
 
@@ -160,30 +139,6 @@ type SliceMap<'Key, 'Value when 'Key : comparison and 'Value : equality>
     member _.Keys = keys
     member _.TryFind = tryFind
 
-    //override this.Equals(obj) =
-    //    match obj with
-    //    | :? SMap<'Key, 'Value> as other -> 
-    //        let mutable result = true
-    //        if not (Seq.equals this.Keys other.Keys) then
-    //            result <- false
-
-    //        if result then
-    //            if not (TryFind.equals this.Keys this.TryFind other.TryFind) then
-    //                result <- false
-
-    //        result
-    //    | _ -> false
-
-    //override this.GetHashCode () =
-    //    hash (this.AsMap())
-
-    //member _.ContainsKey k =
-    //    if keyInRange k then
-    //        match tryFind k with
-    //        | Some _ -> true
-    //        | None -> false
-    //    else
-    //        false
 
 
     static member inline (.*) (a:SliceMap<_,_>, b:SliceMap<_,_>) =
@@ -195,23 +150,7 @@ type SliceMap<'Key, 'Value when 'Key : comparison and 'Value : equality>
         SliceMap(newKeys, newTryFind)
 
 
-
-    //static member inline Sum (m:SMap<_, _>) =
-    //    TryFind.sum m.Keys m.TryFind
-
-    //interface IEnumerable<KeyValuePair<'Key, 'Value>> with
-    //    member _.GetEnumerator () : IEnumerator<KeyValuePair<'Key, 'Value>> = 
-    //        let s = seq { for key in keys -> tryFind key |> Option.map (fun v -> KeyValuePair(key, v)) } |> Seq.choose id
-    //        s.GetEnumerator ()
-
-    //interface System.Collections.IEnumerable with
-    //    member _.GetEnumerator () : Collections.IEnumerator = 
-    //        let s = seq { for key in keys -> tryFind key |> Option.map (fun v -> KeyValuePair(key, v)) } |> Seq.choose id
-    //        s.GetEnumerator () :> Collections.IEnumerator
-
-
-
-type SliceMap2<'Key1, 'Key2, 'Value when 'Key1 : comparison and 'Key2 : comparison and 'Value : equality> 
+type SliceMap2D<'Key1, 'Key2, 'Value when 'Key1 : comparison and 'Key2 : comparison and 'Value : equality> 
     (keys1:SliceSet<'Key1>, keys2:SliceSet<'Key2>, tryFind:TryFind<('Key1 * 'Key2), 'Value>) =
 
     let keys1 = keys1
@@ -226,7 +165,7 @@ type SliceMap2<'Key1, 'Key2, 'Value when 'Key1 : comparison and 'Key2 : comparis
             s
             |> Seq.map (fun (k1, k2, v) -> (k1, k2), v)
             |> TryFind.ofSeq
-        SliceMap2 (keys1, keys2, store)
+        SliceMap2D (keys1, keys2, store)
 
 
     interface ISliceData<('Key1 * 'Key2), 'Value> with
@@ -252,12 +191,9 @@ type SliceMap2<'Key1, 'Key2, 'Value when 'Key1 : comparison and 'Key2 : comparis
             let newTryFind k = tryFind (k, k2)
             SliceMap (keys1, newTryFind)
 
-    static member inline Sum (m:SliceMap2<_,_,_>) =
+    static member inline Sum (m:SliceMap2D<_,_,_>) =
         TryFind.sum m.Keys m.TryFind
 
 
-/// <summary>A function which sums the values contained in a SliceMap</summary>
-/// <param name="x">An instance of ISliceData</param>
-/// <returns>A LinearExpression</returns>
 let inline sum (x:ISliceData<'Key, 'Value>) =
     TryFind.sum x.Keys x.TryFind
