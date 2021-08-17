@@ -27,23 +27,23 @@ module Dense =
         |]
 
     let costs =
-        [|
+        SliceMap [|
             for t in trucks ->
                 t, 100.0 + 10.0 * rng.NextDouble()
-        |] |> SliceMap
+        |]
 
     let capacity =
-        [|
+        SliceMap [|
             for t in trucks ->
                 t, 1_000.0 + 10.0 * rng.NextDouble () 
-        |] |> SliceMap
+        |]
 
     let decisions =
-        [|
+        SliceMap2D [|
             for (c, t) in cityTruckPairs ->
                 let decisionName = DecisionName ($"{c.ToString()}_{t.ToString()}")
                 c, t, { Name = decisionName; Type = DecisionType.Boolean }
-        |] |> SliceMap2D
+        |]
 
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
@@ -71,23 +71,23 @@ module MediumSparsity =
         |] |> Array.choose id
 
     let costs =
-        [|
+        SliceMap [|
             for t in trucks ->
                 t, 100.0 + 10.0 * rng.NextDouble()
-        |] |> SliceMap
+        |]
 
     let capacity =
-        [|
+        SliceMap [|
             for t in trucks ->
                 t, 1_000.0 + 10.0 * rng.NextDouble () 
-        |] |> SliceMap
+        |]
 
     let decisions =
-        [|
+        SliceMap2D [|
             for (c, t) in cityTruckPairs ->
                 let decisionName = DecisionName ($"{c.ToString()}_{t.ToString()}")
                 c, t, { Name = decisionName; Type = DecisionType.Boolean }
-        |] |> SliceMap2D
+        |]
 
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
@@ -115,23 +115,23 @@ module HighSparsity =
         |] |> Array.choose id
 
     let costs =
-        [|
+        SliceMap [|
             for t in trucks ->
                 t, 100.0 + 10.0 * rng.NextDouble()
-        |] |> SliceMap
+        |]
 
     let capacity =
-        [|
+        SliceMap [|
             for t in trucks ->
                 t, 1_000.0 + 10.0 * rng.NextDouble () 
-        |] |> SliceMap
+        |]
 
     let decisions =
-        [|
+        SliceMap2D [|
             for (c, t) in cityTruckPairs ->
                 let decisionName = DecisionName ($"{c.ToString()}_{t.ToString()}")
                 c, t, { Name = decisionName; Type = DecisionType.Boolean }
-        |] |> SliceMap2D
+        |]
 
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
