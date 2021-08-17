@@ -1,263 +1,278 @@
-﻿module SliceMapPerformance.SliceMap
-
+﻿module rec SliceMapPerformance.SliceMap
 
 open System
 open System.Collections.Generic
 
-[<NoComparison;NoEquality>]
-type SliceType<'a when 'a : comparison> =
-  | All
+type Filter =
+    | All
 
-[<NoComparison>]
-type SliceSet<[<EqualityConditionalOn>]'T when 'T : comparison>(comparer:IComparer<'T>, values:Memory<'T>) =
+[<Struct>]
+type IndexRange = {
+    Start : int
+    Length : int
+}
+
+let inline hadamardProduct (l: SliceMap<_,_>, r: SliceMap<_,_>) =
+    let lKeys = l.Keys.Span
+    let lValues = l.Values.Span
+    let rKeys = r.Keys.Span
+    let rValues = r.Values.Span
+    let outKeys = Array.zeroCreate l.Keys.Length
+    let outValues = Array.zeroCreate r.Keys.Length
+
+    let mutable outIdx = 0
+    let mutable lIdx = 0
+    let mutable rIdx = 0
+
+    while lIdx < lKeys.Length && rIdx < rKeys.Length do
+        let c = l.Comparer.Compare (lKeys.[lIdx], rKeys.[rIdx])
+
+        if c = 0 then
+            outKeys.[outIdx] <- lKeys.[lIdx]
+            outValues.[outIdx] <- lValues.[lIdx] * rValues.[rIdx]
+            outIdx <- outIdx + 1
+            lIdx <- lIdx + 1
+            rIdx <- rIdx + 1
+        elif c < 0 then
+            lIdx <- lIdx + 1
+        else
+            rIdx <- rIdx + 1
+
+    // Only want the data we actually computed
+    SliceMap (l.Comparer, ReadOnlyMemory (outKeys, 0, outIdx), ReadOnlyMemory (outValues, 0, outIdx))
+
+
+let inline sum (x : SliceMap<_,_>) =
+    let values = x.Values.Span
+    let mutable acc = LanguagePrimitives.GenericZero
+    for idx = 0 to x.Values.Length - 1 do
+        acc <- acc + values.[idx]
+    acc
+
+
+type SliceMap<'k, 'v when 'k : comparison> (comparer: IComparer<'k>, keys: ReadOnlyMemory<'k>, values: ReadOnlyMemory<'v>) =
+
     let comparer = comparer
+    let keys = keys
     let values = values
 
-    new(values:seq<'T>) =
-        let comparer = LanguagePrimitives.FastGenericComparer<'T>
-        let v = values |> Seq.distinct |> Seq.toArray |> Array.sort
-        SliceSet(comparer, v.AsMemory<'T>())
+    new (keyValuePairs: seq<'k * 'v>) =
+        let data =
+            let x = Array.ofSeq keyValuePairs
+            Array.sortInPlaceBy fst x
+            x
 
-    member internal _.Comparer = comparer
-    member internal _.Values = values
+        let keys = data |> Array.map fst
+        let values = data |> Array.map snd
+        let comparer = LanguagePrimitives.FastGenericComparer<'k>
+        SliceMap (comparer, ReadOnlyMemory keys, ReadOnlyMemory values)
 
-    member _.Union (b: SliceSet<'T>) =
-        let newValues = Array.zeroCreate(values.Length + b.Values.Length)
+    member _.Keys : ReadOnlyMemory<'k> = keys
+    member _.Values : ReadOnlyMemory<'v> = values
+    member _.Comparer : IComparer<'k> = comparer
 
-        let mutable aIdx = 0
-        let mutable bIdx = 0
-        let mutable outIdx = 0
+    static member inline ( .* ) (l: SliceMap<_,_>, r: SliceMap<_,_>) =
+        if l.Keys.Length > r.Keys.Length then
+            hadamardProduct (l, r)
+        else
+            hadamardProduct (r, l)
 
-        while (aIdx < values.Length && bIdx < b.Values.Length) do
+
+
+let private toIntervals (x: _[]) =
+
+    let groups = Array.groupBy id x
+
+    let keyLengths =
+        groups
+        |> Array.map (fun (key, group) -> key, group.Length)
+
+    let startIdxs =
+        keyLengths
+        |> Array.scan (fun acc (k, length) -> acc + length) 0
+
+    Array.zip keyLengths startIdxs.[.. startIdxs.Length - 2]
+    |> Array.map (fun ((key, length), startIdx) -> key, { Start = startIdx; Length = length })
+
+[<Struct>]
+type SliceMap2DInternals<'k1, 'k2, 'v when 'k1 : comparison and 'k2 : comparison> = {
+    OuterComparer : IComparer<'k1>
+    InnerComparer : IComparer<'k2>
+    OuterKeyValues : 'k1[]
+    OuterKeyRanges : IndexRange[]
+    InnerKeyValues : ReadOnlyMemory<'k2>
+    Values : ReadOnlyMemory<'v>
+}
+
+module private SliceMap2DInternals =
+
+    let create (keyValuePairs: seq<'k1 * 'k2 * 'v>) =
+        let keySelector (k1, k2, _) = k1, k2
+        let valueSelector (_, _, v) = v
+        let data =
+            let x = Array.ofSeq keyValuePairs
+            Array.sortInPlaceBy keySelector x
+            x
+
+        let keys = data |> Array.map keySelector
+        let keys1 = keys |> Array.map fst
+        let keysAndSpans = toIntervals keys1
+        let key1Values = keysAndSpans |> Array.map fst
+        let key1Ranges = keysAndSpans |> Array.map snd
+        let keys2 = keys |> Array.map snd
+        let values = data |> Array.map valueSelector
+        let compare1 = LanguagePrimitives.FastGenericComparer<'k1>
+        let compare2 = LanguagePrimitives.FastGenericComparer<'k2>
+        {
+            OuterComparer = compare1
+            InnerComparer = compare2
+            OuterKeyValues = key1Values
+            OuterKeyRanges = key1Ranges
+            InnerKeyValues = ReadOnlyMemory keys2
+            Values = ReadOnlyMemory values
+        }
+
+
+    let swapKeys (s: SliceMap2DInternals<'k1, 'k2, 'v>) =
+        let innerKeyValues = s.InnerKeyValues.Span
+        let values = s.Values.Span
+        let keyTuples : (struct ('k2 * 'k1 * 'v))[] = Array.zeroCreate innerKeyValues.Length
+
+        let mutable outerKeyIdx = 0
+        let mutable outerKeyCount = 0
+
+        for innerKeyIdx = 0 to s.InnerKeyValues.Length - 1 do
+            keyTuples.[innerKeyIdx] <- struct (innerKeyValues.[innerKeyIdx], s.OuterKeyValues.[outerKeyIdx], values.[innerKeyIdx])
+            outerKeyCount <- outerKeyCount + 1
+
+            if outerKeyCount = s.OuterKeyRanges.[outerKeyIdx].Length then
+                outerKeyIdx <- outerKeyIdx + 1
+                outerKeyCount <- 0
+
+        let keySelector struct (k1, k2, _) = struct (k1, k2)
+        let valueSelector struct (_, _, v) = v
+        let keys = keyTuples |> Array.map keySelector
+        let keys1 = keys |> Array.map (fun struct (k1, _) -> k1)
+        let keysAndSpans = toIntervals keys1
+        let key1Values = keysAndSpans |> Array.map fst
+        let key1Ranges = keysAndSpans |> Array.map snd
+        let keys2 = keys |> Array.map (fun struct (_, k2) -> k2)
+        let values = keyTuples |> Array.map valueSelector
+
+        {
+            OuterComparer = s.InnerComparer
+            InnerComparer = s.OuterComparer
+            OuterKeyValues = key1Values
+            OuterKeyRanges = key1Ranges
+            InnerKeyValues = ReadOnlyMemory keys2
+            Values = ReadOnlyMemory values
+        }
+
+
+type SliceMap2DState<'k1, 'k2, 'v when 'k1 : comparison and 'k2 : comparison> =
+    | Key1Key2 of SliceMap2DInternals<'k1, 'k2, 'v>
+    | Key2Key1 of SliceMap2DInternals<'k2, 'k1, 'v>
+
+
+module private SliceMap2DState =
+
+    let swap (s: SliceMap2DState<'k1, 'k2, 'v>) =
+        match s with
+        | Key1Key2 internals -> SliceMap2DState.Key2Key1 (SliceMap2DInternals.swapKeys internals)
+        | Key2Key1 internals -> SliceMap2DState.Key1Key2 (SliceMap2DInternals.swapKeys internals)
+
+
+type SliceMap2D<'k1, 'k2, 'v 
+                 when 'k1 : comparison
+                 and 'k2 : comparison>
+    (internalState: SliceMap2DState<_, _, _>) =
+
+    let mutable internalState = internalState
+    let mutable intervalIdx = 0
+
+
+    new (keyValuePairs: seq<'k1 * 'k2 * 'v>) =
+        let internals = SliceMap2DInternals.create keyValuePairs
+        let state = SliceMap2DState.Key1Key2 internals
+        SliceMap2D state
+
+
+    member _.Item
+        // Ignoring `f` at this time
+        with get (x: 'k1, f: Filter) =
+
+            let internals =
+                match internalState with
+                | SliceMap2DState.Key1Key2 i -> i
+                | SliceMap2DState.Key2Key1 i -> 
+                    let reOrdered = SliceMap2DInternals.swapKeys i
+                    intervalIdx <- 0
+                    internalState <- SliceMap2DState.Key1Key2 reOrdered
+                    reOrdered
+
+            let mutable keepSearching = true
+            let mutable keyFound = false
+
+            while keepSearching do
+                let c = internals.OuterComparer.Compare (internals.OuterKeyValues.[intervalIdx], x)
     
-            let c = comparer.Compare(values.Span.[aIdx], b.Values.Span.[bIdx])
+                if c = 0 then
+                    //if intervalIdx < internals.OuterKeyValues.Length - 1 then
+                    //    intervalIdx <- intervalIdx + 1
+                    keepSearching <- false
+                    keyFound <- true
+                if c < 0 then
+                    if intervalIdx < internals.OuterKeyValues.Length - 1 then
+                        intervalIdx <- intervalIdx + 1
+                    else
+                        keepSearching <- false
+                else
+                    if intervalIdx > 0 then
+                        intervalIdx <- intervalIdx - 1
+                    else
+                        keepSearching <- false
 
-            if c < 0 then
-                newValues.[outIdx] <- values.Span.[aIdx]
-                aIdx <- aIdx + 1
-                outIdx <- outIdx + 1
-            elif c = 0 then
-                newValues.[outIdx] <- values.Span.[aIdx]
-                aIdx <- aIdx + 1
-                bIdx <- bIdx + 1
-                outIdx <- outIdx + 1
+            if keyFound then
+                let interval = internals.OuterKeyRanges.[intervalIdx]
+                SliceMap (internals.InnerComparer, internals.InnerKeyValues.Slice (interval.Start, interval.Length), internals.Values.Slice (interval.Start, interval.Length))
             else
-                newValues.[outIdx] <- b.Values.Span.[bIdx]
-                bIdx <- bIdx + 1
-                outIdx <- outIdx + 1
-
-        while aIdx < values.Length do
-            newValues.[outIdx] <- values.Span.[aIdx]
-            aIdx <- aIdx + 1
-            outIdx <- outIdx + 1
-
-        while bIdx < b.Values.Length do
-            newValues.[outIdx] <- b.Values.Span.[bIdx]
-            bIdx <- bIdx + 1
-            outIdx <- outIdx + 1
-
-        SliceSet(comparer, newValues.AsMemory(0, outIdx))
-
-    interface IEnumerable<'T> with
-        member _.GetEnumerator(): IEnumerator<'T> = 
-            let s = seq { for idx in 0..values.Length-1 -> values.Span.[idx] }
-            s.GetEnumerator()
-
-    interface System.Collections.IEnumerable with
-        member _.GetEnumerator(): Collections.IEnumerator = 
-            let s = seq { for idx in 0..values.Length-1 -> values.Span.[idx] }
-            s.GetEnumerator() :> Collections.IEnumerator
+                SliceMap (internals.InnerComparer, ReadOnlyMemory Array.empty, ReadOnlyMemory Array.empty)
 
 
-    member _.Count =
-        values.Length
+    member _.Item
+        // Ignoring `f` at this time
+        with get (f: Filter, x: 'k2) =
+            let internals =
+                match internalState with
+                | SliceMap2DState.Key2Key1 i -> i
+                | SliceMap2DState.Key1Key2 i -> 
+                    let reOrdered = SliceMap2DInternals.swapKeys i
+                    intervalIdx <- 0
+                    internalState <- SliceMap2DState.Key2Key1 reOrdered
+                    reOrdered
 
+            let mutable keepSearching = true
+            let mutable keyFound = false
 
-[<RequireQualifiedAccess>]
-module SliceSet =
+            while keepSearching do
+                let c = internals.OuterComparer.Compare (internals.OuterKeyValues.[intervalIdx], x)
+                
+                if c = 0 then
+                    keepSearching <- false
+                    keyFound <- true
+                if c < 0 then
+                    if intervalIdx < internals.OuterKeyValues.Length - 1 then
+                        intervalIdx <- intervalIdx + 1
+                    else
+                        keepSearching <- false
+                else
+                    if intervalIdx > 0 then
+                        intervalIdx <- intervalIdx - 1
+                    else
+                        keepSearching <- false
 
-    let toSeq (a:SliceSet<_>) =
-        seq { for i in 0..a.Count - 1 -> a.Values.Span.[i] }
-
-    let slice (f:SliceType<_>) (keys:SliceSet<_>) =
-            match f with
-            | All -> keys
-
-
-type TryFind<'Key, 'Value> = 'Key -> 'Value option
-
-
-module TryFind =
-
-    let ofDictionary (d:Dictionary<'Key,'Value>) : TryFind<'Key, 'Value> =
-        fun k -> 
-          match d.TryGetValue(k) with
-          | true, value -> Some value
-          | false, _ -> None
-
-    let ofSeq (s:seq<'Key * 'Value>) : TryFind<'Key, 'Value> =
-        let d = Dictionary ()
-        
-        for (k, v) in s do
-                d.[k] <- v
-
-        ofDictionary d
-
-    //let toSeq (keys:seq<_>) (s:TryFind<_,_>) =
-    //    let lookup k = s k |> Option.map (fun v -> k, v)
-        
-    //    keys
-    //    |> Seq.choose lookup
-
-    //let toMap keys (s:TryFind<_,_>) =
-    //    s |> (toSeq keys) |> Map.ofSeq
-
-    //let equals keys (a:TryFind<_,_>) (b:TryFind<_,_>) =
-    //    let mutable result = true
-
-    //    for k in keys do
-    //        let aValue = a k
-    //        let bValue = b k
-    //        if aValue <> bValue then
-    //            result <- false
-
-    //    result
-
-
-    let inline sum keys (tryFind:TryFind<_,_>) =
-        let mutable acc = LanguagePrimitives.GenericZero
-
-        for k in keys do
-            match tryFind k with
-            | Some v -> 
-                acc <- acc + v
-            | None -> ()
-
-        acc
-
-
-type ISliceData<'Key, 'Value when 'Key : comparison and 'Value : equality> =
-    abstract member Keys : 'Key seq
-    abstract member TryFind : TryFind<'Key, 'Value>
-
-
-[<NoComparison>]
-type SliceMap<'Key, 'Value when 'Key : comparison and 'Value : equality> 
-    (keys:SliceSet<'Key>, tryFind:TryFind<'Key, 'Value>) =
-
-    let keys = keys
-    let tryFind = tryFind
-
-    new (s:seq<'Key * 'Value>) =
-        let keys = s |> Seq.map fst |> SliceSet
-        let store = TryFind.ofSeq s
-        SliceMap (keys, store)
-
-    interface ISliceData<'Key, 'Value> with
-        member _.Keys = SliceSet.toSeq keys
-        member _.TryFind = tryFind
-
-    member _.Keys = keys
-    member _.TryFind = tryFind
-
-    //override this.Equals(obj) =
-    //    match obj with
-    //    | :? SMap<'Key, 'Value> as other -> 
-    //        let mutable result = true
-    //        if not (Seq.equals this.Keys other.Keys) then
-    //            result <- false
-
-    //        if result then
-    //            if not (TryFind.equals this.Keys this.TryFind other.TryFind) then
-    //                result <- false
-
-    //        result
-    //    | _ -> false
-
-    //override this.GetHashCode () =
-    //    hash (this.AsMap())
-
-    //member _.ContainsKey k =
-    //    if keyInRange k then
-    //        match tryFind k with
-    //        | Some _ -> true
-    //        | None -> false
-    //    else
-    //        false
-
-
-    static member inline (.*) (a:SliceMap<_,_>, b:SliceMap<_,_>) =
-        let newKeys = a.Keys.Union b.Keys
-        let newTryFind k =
-            match (a.TryFind k), (b.TryFind k) with
-            | Some lv, Some rv -> Some (lv * rv)
-            | _,_ -> None
-        SliceMap(newKeys, newTryFind)
-
-
-
-    //static member inline Sum (m:SMap<_, _>) =
-    //    TryFind.sum m.Keys m.TryFind
-
-    //interface IEnumerable<KeyValuePair<'Key, 'Value>> with
-    //    member _.GetEnumerator () : IEnumerator<KeyValuePair<'Key, 'Value>> = 
-    //        let s = seq { for key in keys -> tryFind key |> Option.map (fun v -> KeyValuePair(key, v)) } |> Seq.choose id
-    //        s.GetEnumerator ()
-
-    //interface System.Collections.IEnumerable with
-    //    member _.GetEnumerator () : Collections.IEnumerator = 
-    //        let s = seq { for key in keys -> tryFind key |> Option.map (fun v -> KeyValuePair(key, v)) } |> Seq.choose id
-    //        s.GetEnumerator () :> Collections.IEnumerator
-
-
-
-type SliceMap2<'Key1, 'Key2, 'Value when 'Key1 : comparison and 'Key2 : comparison and 'Value : equality> 
-    (keys1:SliceSet<'Key1>, keys2:SliceSet<'Key2>, tryFind:TryFind<('Key1 * 'Key2), 'Value>) =
-
-    let keys1 = keys1
-    let keys2 = keys2
-    let keys = seq {for k1 in keys1 do for k2 in keys2 -> (k1, k2)}
-    let tryFind = tryFind
-
-    new (s:seq<'Key1 * 'Key2 * 'Value>) =
-        let keys1 = s |> Seq.map (fun (k, _,_) -> k) |> SliceSet
-        let keys2 = s |> Seq.map (fun (_, k,_) -> k) |> SliceSet
-        let store = 
-            s
-            |> Seq.map (fun (k1, k2, v) -> (k1, k2), v)
-            |> TryFind.ofSeq
-        SliceMap2 (keys1, keys2, store)
-
-
-    interface ISliceData<('Key1 * 'Key2), 'Value> with
-      member _.Keys = keys
-      member _.TryFind = tryFind
-
-    member _.Keys1 = keys1
-    member _.Keys2 = keys2
-    member _.Keys = keys
-    member _.TryFind = tryFind
-
-    // Slices
-    // 1D
-    member this.Item
-        with get (k1, k2f) =
-            let keys2 = SliceSet.slice k2f this.Keys2
-            let newTryFind k = tryFind (k1, k)
-            SliceMap (keys2, newTryFind)
-
-    member this.Item
-        with get (k1f, k2) =
-            let keys1 = SliceSet.slice k1f this.Keys1
-            let newTryFind k = tryFind (k, k2)
-            SliceMap (keys1, newTryFind)
-
-    static member inline Sum (m:SliceMap2<_,_,_>) =
-        TryFind.sum m.Keys m.TryFind
-
-
-/// <summary>A function which sums the values contained in a SliceMap</summary>
-/// <param name="x">An instance of ISliceData</param>
-/// <returns>A LinearExpression</returns>
-let inline sum (x:ISliceData<'Key, 'Value>) =
-    TryFind.sum x.Keys x.TryFind
+            if keyFound then
+                let interval = internals.OuterKeyRanges.[intervalIdx]
+                SliceMap (internals.InnerComparer, internals.InnerKeyValues.Slice (interval.Start, interval.Length), internals.Values.Slice (interval.Start, interval.Length))
+            else
+                SliceMap (internals.InnerComparer, ReadOnlyMemory Array.empty, ReadOnlyMemory Array.empty)
