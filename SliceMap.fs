@@ -13,6 +13,7 @@ type IndexRange = {
 }
 
 let inline hadamardProduct (l: SliceMap<_,_>, r: SliceMap<_,_>) =
+    SuperluminalPerf.BeginEvent("Hadamard Startup") |> ignore
     let lKeys = l.Keys.Span
     let lValues = l.Values.Span
     let rKeys = r.Keys.Span
@@ -23,13 +24,21 @@ let inline hadamardProduct (l: SliceMap<_,_>, r: SliceMap<_,_>) =
     let mutable outIdx = 0
     let mutable lIdx = 0
     let mutable rIdx = 0
+    SuperluminalPerf.EndEvent()
+    
+    SuperluminalPerf.BeginEvent("Hadamard Calculation") |> ignore
 
     while lIdx < lKeys.Length && rIdx < rKeys.Length do
-        let c = l.Comparer.Compare (lKeys.[lIdx], rKeys.[rIdx])
+        let lKey = lKeys.[lIdx]
+        let lValue = lValues.[lIdx]
+        let rKey = rKeys.[rIdx]
+        let rValue = rValues.[rIdx]
+
+        let c = l.Comparer.Compare (lKey, rKey)
 
         if c = 0 then
-            outKeys.[outIdx] <- lKeys.[lIdx]
-            outValues.[outIdx] <- lValues.[lIdx] * rValues.[rIdx]
+            outKeys.[outIdx] <- lKey
+            outValues.[outIdx] <- lValue * rValue
             outIdx <- outIdx + 1
             lIdx <- lIdx + 1
             rIdx <- rIdx + 1
@@ -38,8 +47,15 @@ let inline hadamardProduct (l: SliceMap<_,_>, r: SliceMap<_,_>) =
         else
             rIdx <- rIdx + 1
 
+    SuperluminalPerf.EndEvent()
+
+
+    SuperluminalPerf.BeginEvent("Create Hadamard Result") |> ignore
     // Only want the data we actually computed
-    SliceMap (l.Comparer, ReadOnlyMemory (outKeys, 0, outIdx), ReadOnlyMemory (outValues, 0, outIdx))
+    let result = SliceMap (l.Comparer, ReadOnlyMemory (outKeys, 0, outIdx), ReadOnlyMemory (outValues, 0, outIdx))
+    SuperluminalPerf.EndEvent()
+
+    result
 
 
 let inline sum (x : SliceMap<_,_>) =

@@ -48,7 +48,7 @@ module Dense =
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for _ = 1 to 10 do
+        for _ = 1 to 20 do
             for c in cities do
                 let total = sum (capacity .* decisions.[c, All] .* costs)
                 result <- total
@@ -92,7 +92,7 @@ module MediumSparsity =
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for _ = 1 to 10 do
+        for _ = 1 to 20 do
             for c in cities do
                 let total = sum (capacity .* decisions.[c, All] .* costs)
                 result <- total
@@ -136,10 +136,24 @@ module HighSparsity =
     let loop () =
         let mutable result = LanguagePrimitives.GenericZero
 
-        for _ = 1 to 10 do
-            for c in cities do
-                let total = sum (capacity .* decisions.[c, All] .* costs)
+        for _ = 1 to 20 do
+            for c = 0 to cities.Length - 1 do
+                let c = c * 1<City>
+                SuperluminalPerf.BeginEvent("Start Slice") |> ignore
+                let slice =  decisions.[c, All]
+                SuperluminalPerf.EndEvent()
+                
+                SuperluminalPerf.BeginEvent("Hadamard Product") |> ignore
+                let product = capacity .* slice .* costs
+                SuperluminalPerf.EndEvent()
+                
+                SuperluminalPerf.BeginEvent("Summation") |> ignore
+                let total = sum product
+                SuperluminalPerf.EndEvent()
+
+                SuperluminalPerf.BeginEvent("Assignment") |> ignore
                 result <- total
+                SuperluminalPerf.EndEvent()
 
         result
 
@@ -162,6 +176,8 @@ type Benchmarks () =
 
 [<EntryPoint>]
 let main argv =
+
+    SuperluminalPerf.Initialize()
 
     match argv.[0].ToLower() with
     | "benchmark" ->
